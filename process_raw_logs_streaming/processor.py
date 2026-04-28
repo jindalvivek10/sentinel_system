@@ -21,7 +21,8 @@ class SentinelProcessor:
         for entry in stream:
             print(f"====processing stream entry = {entry}====")
             try:
-                if ":" not in entry: continue
+                if ":" not in entry: 
+                    continue
                 
                 s_id, hex_val = entry.split(":", 1)
                 status_code = int(hex_val.strip(), 16)
