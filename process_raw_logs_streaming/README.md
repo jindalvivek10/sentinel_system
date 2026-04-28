@@ -63,3 +63,42 @@ You will see logs being generated and processed in real-time. Use `Ctrl+C` to te
 
 ---
 *Developed as part of the Sentinel System Infrastructure.*
+
+## 🚀 Future Scalability Roadmap
+
+To evolve this system for high-scale production, the following architectural patterns are recommended:
+
+### 1. Message Queues (Decoupling)
+Integrating a queueing system (e.g., `multiprocessing.Queue` for local scaling or **RabbitMQ/Kafka** for distributed scaling) would decouple the `Source` from the `Sink`. This provides a buffer to handle telemetry spikes without applying immediate backpressure to the sensors.
+
+### 2. Async I/O (Concurrency)
+**Best for:** I/O-bound tasks such as database writes or external API alerts.
+- **Concept:** Uses a single CPU core with an event loop. By replacing standard generators with `async generators`, the system can `await` a slow network call.
+- **Mechanism:** Instead of blocking the entire thread, the processor "pauses" the specific alert task and switches back to fetching or processing the next log in the stream.
+
+### 3. Multiprocessing (Parallelism)
+**Best for:** CPU-bound tasks such as heavy log decryption or real-time pattern matching.
+- **Concept:** True "Divide and Conquer" by bypassing Python's Global Interpreter Lock (GIL).
+- **Mechanism:** Distributes the load across multiple CPU cores. Each core handles a chunk of the telemetry stream independently. This increases throughput for intensive logic but introduces higher memory overhead and requires Inter-Process Communication (IPC).
+
+---
+
+### ⚡ Concurrency vs. Parallelism Summary
+
+| Feature | Concurrency (Async IO) | Parallelism (Multiprocessing) |
+| :--- | :--- | :--- |
+| **Execution** | 1 CPU Core (Interleaved) | Multiple CPU Cores (Simultaneous) |
+| **Primary Benefit** | Efficiently handles many I/O waits | Maximum raw processing power |
+| **Workload Type** | Network/Disk Bound | Math/Logic/CPU Bound |
+
+## 🐹 How Concurrency and Parallelism Work in Go
+
+In Python, developers must explicitly choose between `asyncio` (single-core concurrency) and `multiprocessing` (multi-core parallelism). In Go, you simply write logic using **goroutines**, and the runtime manages the hardware abstraction for you.
+
+### 1. Single-Core Execution (Concurrency)
+On a single core, only one instruction executes at a time. The Go scheduler multiplexes thousands of goroutines onto a single OS thread. It performs rapid context switching during I/O waits to maximize efficiency.
+*   **Outcome:** You aren't doing multiple things at the *exact* same microsecond, but you never waste CPU cycles waiting idly for I/O.
+
+### 2. Multi-Core Execution (Parallelism)
+The Go Runtime automatically detects available cores (governed by the `GOMAXPROCS` setting) and creates corresponding OS-level threads. The scheduler then distributes goroutines across all available processors, achieving true parallel execution without requiring a separate library.
+*   **Outcome:** You are performing multiple tasks simultaneously. For example, 8 different sensors can be parsed across 8 different cores in the same microsecond, while 8 different database calls are fired in parallel.
