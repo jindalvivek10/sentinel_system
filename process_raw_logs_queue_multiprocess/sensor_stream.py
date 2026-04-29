@@ -2,24 +2,41 @@ import time
 import random
 import multiprocessing
 
-def sensor_publisher(raw_queue: multiprocessing.Queue):
+def sensor_publisher(raw_queue: multiprocessing.Queue) -> None:
     """
-    Simulates a separate service reading from hardware and 
-    PUSHING data into a raw telemetry queue.
+    PURPOSE: Acts as the 'Producer' (Source). 
+    
+    ARGS:
+        raw_queue: The multiprocessing.Queue used to push raw data 
+                   to the downstream Processor service.
+    
+    RETURNS: None (Runs an infinite loop until terminated).
     """
-    mock_data = ["Traf_01:0x0003", "Gate_99:0x0001", "Bridge_X:0x0003", "Traf_02:0x001F"]
-    batch_count = 0
+    
+    # Predefined telemetry strings consistent with GitHub repository.
+    raw_telemetry_data: list[str] = [
+        "Bridge_X:0x0003", 
+        "Bridge_Y:0x0001", 
+        "Bridge_Z:0x0003", 
+        "Tunnel_A:0x001F",
+        "Gate_B:0x0000"
+    ]
+    
+    print("[Sensor] Service active. Streaming telemetry to Queue...")
     
     try:
         while True:
-            batch_count += 1
-            # Simulate sensor frequency
-            time.sleep(2) 
+            # 1. Simulate the arrival frequency of sensor data (1.5 seconds)
+            time.sleep(5) 
             
-            raw_log = random.choice(mock_data)
-            print(f"[Sensor] 📡 Generated: {raw_log} (Batch {batch_count})")
+            # 2. Pick a log entry from our predefined list
+            log_entry: str = random.choice(raw_telemetry_data)
             
-            # PUSH to queue
-            raw_queue.put(raw_log)
-    except KeyboardInterrupt:
-        print("[Sensor] Stopping...")
+            # 3. THE PUSH:
+            # Serializes and sends the string through the OS pipe.
+            raw_queue.put(log_entry)
+            
+            print(f"[Sensor] 📡 Telemetry Sent: {log_entry}")
+            
+    except Exception as e:
+        print(f"[Sensor] ❌ Critical Failure: {e}")

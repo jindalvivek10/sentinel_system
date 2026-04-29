@@ -1,50 +1,44 @@
-# Sentinel System: Streaming Log Processor
+# Sentinel System: Multiprocess Queue Pipeline
 
-This directory contains a high-performance, memory-efficient telemetry processing pipeline designed to handle real-time sensor data using Python's generator-based streaming architecture.
+This directory contains a high-throughput, parallel telemetry processing pipeline. Unlike the streaming implementation, this version leverages multi-core parallelism and Inter-Process Communication (IPC) to handle high-volume sensor data by bypassing Python's Global Interpreter Lock (GIL).
 
 ## Architecture Overview
 
-The system follows a **Source -> Pipe -> Sink** pattern. Instead of processing data in large batches (which consumes significant memory), this implementation uses **Lazy Evaluation**. Data flows through the system one record at a time, keeping the memory footprint constant (O(1) space complexity relative to the stream size).
+The system utilizes a **Producer-Consumer** pattern distributed across isolated OS processes. Data is moved through the pipeline using `multiprocessing.Queue`, ensuring thread-safe communication and decoupling between stages.
 
-### 1. The Source (`sensor_stream.py`)
-This module simulates a raw hardware feed or a network socket.
-- **Function**: `get_raw_telemetry_stream()`
-- **Output**: An `Iterator[str]` yielding hex-encoded telemetry strings (e.g., `Bridge_X:0x0003`).
-- **Purpose**: Represents the entry point of data into the system.
-
-### 2. The Pipe (`processor.py`)
-This is the "Middleware" containing the business logic and data cleaning.
-- **Function**: `filter_critical_alerts(stream)`
+### 1. The Logic Engine (`processor.py`)
+This module acts as the primary worker process responsible for CPU-bound tasks.
+- **Function**: `alert_processor(raw_queue, alert_queue)`
 - **Logic**: 
-    - Parses raw strings into immutable `SensorLog` (NamedTuple) objects.
-    - Uses bitwise operations (`&` and `>>`) to extract status flags from 16-bit hex codes.
-    - **Filtering**: It only yields logs where the sensor is both `Active` (Bit 0) and has a `Low Battery` (Bit 1).
-- **Purpose**: Transforms and filters raw data into structured, actionable information.
+    - **IPC**: Blocks on the `raw_queue` waiting for incoming hex strings.
+    - **Parsing**: Transforms raw hex into structured `SensorLog` (NamedTuple) objects.
+    - **Bitmasking**: Uses efficient bitwise operations to extract `is_active`, `low_battery`, and `signal_strength`.
+    - **Filtering**: Identifies critical logs (Active + Low Battery) and pushes them to the next stage.
+    - **Shutdown**: Implements a "Poison Pill" pattern—if it receives `None`, it gracefully shuts down.
 
-### 3. The Sink (`dispatch_system.py`)
-The final destination for processed alerts.
-- **Function**: `alert_emergency_units(alert_stream)`
-- **Logic**: Iterates over the incoming stream of critical logs and triggers external actions (simulated by console logging).
-- **Purpose**: Executes side effects based on processed telemetry.
+### 2. The Dispatch System (`dispatch_system.py`)
+The final consumer that executes side-effects (e.g., emergency alerts).
+- **Function**: `dispatch_consumer(alert_queue)`
+- **Logic**:
+    - Listens on the `alert_queue` for critical objects provided by the processor.
+    - Triggers simulated emergency protocols for sensors requiring battery service.
+    - Handles its own shutdown upon receiving a `None` signal.
 
-### 4. The Orchestrator (`orchestrator_pipeline.py`)
-This acts as the system's "wiring" or "message broker simulation."
-
-#### Step-by-Step Execution Flow:
-1.  **Initialize Source**: Calls `get_raw_telemetry_stream()` to get a generator object. No data is fetched yet.
-2.  **Instantiate Logic**: Creates the `SentinelProcessor`.
-3.  **Construct Pipeline**: Passes the raw generator into `processor.filter_critical_alerts()`. This creates a *nested* generator. **Note:** At this point, no processing has occurred.
-4.  **Trigger Execution**: The `alert_emergency_units()` function starts a `for` loop. This "pulls" the first item from the processor, which in turn "pulls" the first item from the sensor stream.
-5.  **Streaming Loop**: Each log travels the full length of the pipeline (Raw -> Parsed -> Filtered -> Dispatched) before the next log is even read from the source.
+### 3. The Orchestrator (Implied)
+The main process responsible for:
+1. Initializing the shared `multiprocessing.Queue` instances.
+2. Spawning the `Process` workers for the Logic Engine and Dispatcher.
+3. Feeding raw data into the entry-point queue.
+4. Cleaning up and joining processes after sending shutdown signals.
 
 ## Why This Design?
 
 | Feature | Benefit |
 | :--- | :--- |
-| **Generators** | Handles infinite data streams without crashing from memory exhaustion. |
-| **Bitmasking** | Extremely fast status extraction compared to JSON or string parsing. |
-| **NamedTuples** | Provides immutability and memory efficiency while maintaining readability. |
-| **Decoupling** | Each service (Source, Pipe, Sink) is independent; you can swap the Source from a mock to a Kafka consumer without changing the Processor. |
+| **Parallelism** | Executes parsing and dispatching on separate CPU cores simultaneously. |
+| **GIL Bypass** | Since each worker is a separate process, Python's GIL does not bottleneck the pipeline. |
+| **Queues** | Provides a memory-safe buffer. If the Dispatcher slows down, the Processor can continue working until the queue is full. |
+| **Poison Pill** | A clean, deterministic way to signal shutdown across process boundaries without using forceful kills. |
 
 ## Data Format Detail
 The status code is a 16-bit integer parsed from Hex:
@@ -52,53 +46,39 @@ The status code is a 16-bit integer parsed from Hex:
 - **Bit 1 (0x0002)**: Low Battery (1 = True, 0 = False)
 - **Bits 2-4 (0x001C)**: Signal Strength (Value 0-7)
 
-A log is considered **CRITICAL** only if `(status_code & 0x0001)` and `(status_code & 0x0002)` are both truthy.
+## Graceful Shutdown
+To ensure the system exits cleanly without leaving zombie processes, the pipeline uses a signaling mechanism:
+1. The **Producer** sends `None` to the `raw_queue`.
+2. The **Processor** sees `None`, sends `None` to the `alert_queue`, and exits.
+3. The **Dispatcher** sees `None` and exits.
 
 ## How to Run
-Execute the pipeline from the project root:
+Execute the pipeline from the project root (ensure you have an orchestrator script that imports these functions):
 ```bash
-python3 orchestrator_pipeline.py
+python3 orchestrator.py
 ```
-You will see logs being generated and processed in real-time. Use `Ctrl+C` to terminate the simulation.
+
+---
+
+## 🛡️ Comparison: Streaming vs. Multiprocessing
+
+### Streaming (Generators)
+*   **Pros**: Extremely low memory footprint, simple single-threaded logic.
+*   **Cons**: Bound by a single CPU core; if one stage is slow (like a slow API call), the entire pipeline stalls.
+*   **Best for**: Moderate data rates where memory efficiency is the priority.
+
+### Multiprocessing (Queues)
+*   **Pros**: True parallel execution; high throughput; decoupled stages.
+*   **Cons**: Higher memory overhead (multiple Python interpreters); complex IPC (Inter-Process Communication).
+*   **Best for**: High-frequency data or heavy CPU-bound transformation logic.
+
+## 🚀 Future Scalability
+
+### Distributed Queuing
+While `multiprocessing.Queue` works for a single machine, this architecture can be scaled horizontally by replacing the internal queues with **Redis** or **RabbitMQ**. This would allow the `processor.py` workers to run on different physical servers than the `dispatch_system.py`.
+
+### Worker Pooling
+For even higher loads, multiple `alert_processor` instances can be spawned to read from the same `raw_queue`, effectively load-balancing the parsing work across all available CPU cores.
 
 ---
 *Developed as part of the Sentinel System Infrastructure.*
-
-## 🚀 Future Scalability Roadmap
-
-To evolve this system for high-scale production, the following architectural patterns are recommended:
-
-### 1. Message Queues (Decoupling)
-Integrating a queueing system (e.g., `multiprocessing.Queue` for local scaling or **RabbitMQ/Kafka** for distributed scaling) would decouple the `Source` from the `Sink`. This provides a buffer to handle telemetry spikes without applying immediate backpressure to the sensors.
-
-### 2. Async I/O (Concurrency)
-**Best for:** I/O-bound tasks such as database writes or external API alerts.
-- **Concept:** Uses a single CPU core with an event loop. By replacing standard generators with `async generators`, the system can `await` a slow network call.
-- **Mechanism:** Instead of blocking the entire thread, the processor "pauses" the specific alert task and switches back to fetching or processing the next log in the stream.
-
-### 3. Multiprocessing (Parallelism)
-**Best for:** CPU-bound tasks such as heavy log decryption or real-time pattern matching.
-- **Concept:** True "Divide and Conquer" by bypassing Python's Global Interpreter Lock (GIL).
-- **Mechanism:** Distributes the load across multiple CPU cores. Each core handles a chunk of the telemetry stream independently. This increases throughput for intensive logic but introduces higher memory overhead and requires Inter-Process Communication (IPC).
-
----
-
-### ⚡ Concurrency vs. Parallelism Summary
-
-| Feature | Concurrency (Async IO) | Parallelism (Multiprocessing) |
-| :--- | :--- | :--- |
-| **Execution** | 1 CPU Core (Interleaved) | Multiple CPU Cores (Simultaneous) |
-| **Primary Benefit** | Efficiently handles many I/O waits | Maximum raw processing power |
-| **Workload Type** | Network/Disk Bound | Math/Logic/CPU Bound |
-
-## 🐹 How Concurrency and Parallelism Work in Go
-
-In Python, developers must explicitly choose between `asyncio` (single-core concurrency) and `multiprocessing` (multi-core parallelism). In Go, you simply write logic using **goroutines**, and the runtime manages the hardware abstraction for you.
-
-### 1. Single-Core Execution (Concurrency)
-On a single core, only one instruction executes at a time. The Go scheduler multiplexes thousands of goroutines onto a single OS thread. It performs rapid context switching during I/O waits to maximize efficiency.
-*   **Outcome:** You aren't doing multiple things at the *exact* same microsecond, but you never waste CPU cycles waiting idly for I/O.
-
-### 2. Multi-Core Execution (Parallelism)
-The Go Runtime automatically detects available cores (governed by the `GOMAXPROCS` setting) and creates corresponding OS-level threads. The scheduler then distributes goroutines across all available processors, achieving true parallel execution without requiring a separate library.
-*   **Outcome:** You are performing multiple tasks simultaneously. For example, 8 different sensors can be parsed across 8 different cores in the same microsecond, while 8 different database calls are fired in parallel.
