@@ -25,6 +25,14 @@ PSEUDO-LOGIC:
 COMPLEXITY ANALYSIS:
 - TIME: O(1) per update. No loops, just simple arithmetic.
 - SPACE: O(I * K) + O(I). Memory is capped and predictable.
+- TIME: O(1) per update. 
+  * Why? We use a "Running Balance" pattern. We perform exactly one subtraction 
+    and one addition regardless of the window size (K).
+- SPACE: O(I * K) where I = Number of unique Intersections, K = Window Size.
+  * Breakdown: 
+    1. O(I * K): The 'history' dict stores up to K items for each of the I intersections.
+    2. O(I): The 'running_sums' dict stores one float for each intersection.
+    * Result: Memory usage is bounded and will never exceed this cap.
 """
 
 from collections import deque
