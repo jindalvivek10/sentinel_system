@@ -1,6 +1,13 @@
 """
 FILE: naive_event_orchestrator.py
 
+EXAMPLE Real Analogy
+The Naive Orchestrator (Old Code): The ER receptionist waits until there are exactly 3 patients in the waiting room. 
+Once 3 people are there, the receptionist locks the front door, forces everyone else to wait, sorts those 3 people by injury 
+severity, and sends them to a doctor. The receptionist waits until the doctor is completely finished with all of them before 
+opening the front door to let the next patients in. If a patient requires a slow, 2-hour X-ray, the whole hospital freezes, 
+and critical emergencies outside are locked out.
+
 SYSTEM ROLE: 
 The "Nervous System" of Sentinel. It receives raw telemetry (speed) from intersections, 
 determines the urgency (Priority), and organizes the data for the DP Brain.
@@ -74,14 +81,14 @@ BOTTLENECKS & ISSUES (Why this is "Naive"):
 2. SYNCHRONOUS BLOCKING: The processing loop is serial. If a Phase 2 pathfinder 
    execution is slow, it blocks the orchestrator from collecting or sorting 
    new incoming data.
-3. COLLECTION LATENCY: The 'while' loop for collection can be inefficient.
-   It waits for a timeout (2s) for every single missing item in a batch, 
-   potentially stalling processing of existing events if sensor input is slow.
-4. SORTING OVERHEAD: Sorting an entire list for every batch is more expensive 
+3. SORTING OVERHEAD: Sorting an entire list for every batch is more expensive 
    than maintaining a self-sorting structure like a Min-Heap.
+4. SLOW PROCESSing for Routine events: Within a batch, always the priority events are processed first and routine events
+   are processed last which is not good because routine events always are processed
+   later than priority events.
 """
 
-import queue
+import  queue
 import time
 from typing import List, Dict, Any, Optional
 from datetime import datetime

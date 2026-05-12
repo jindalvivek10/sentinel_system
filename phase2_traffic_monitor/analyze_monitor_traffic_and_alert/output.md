@@ -1,7 +1,9 @@
 --- [NAIVE SYSTEM] Starting Simulation with 2 Intersections ---
 # Sentinel System: Traffic Monitor Simulation Logs
 
-## 1. Naive System Simulation
+---
+## 🧪 1. Naive System Simulation
+**Status:** 🟢 [START] Simulation Initiated
 *   **Logic:** List-append (Infinite history growth)
 *   **Time Complexity:** O(K) per update (Slicing/Summing)
 
